@@ -1,15 +1,69 @@
 import pandas as pd
-import numpy as np
+import json
 import matplotlib.pyplot as plt
 import seaborn as sns
+import geopandas as gpd
+from shapely.geometry import Point, LineString
+import numpy as np
 import os
 
+def load_and_preprocess(file_name):
+    try:
+        with open(file_name, 'r') as file:
+            data = json.load(file)
+        df = pd.json_normalize(data)
+        
+        # Convert pubMillis and request_time to datetime format
+        df['pubMillis'] = pd.to_datetime(df['pubMillis'], unit='ms')
+        df['request_time'] = pd.to_datetime(df['request_time'], unit='ms')
+        
+        # Handling different structures for alerts and jams
+        if 'location.x' in df.columns and 'location.y' in df.columns:
+            # Handling alerts structure
+            df['geometry'] = df.apply(lambda row: Point(row['location.x'], row['location.y']), axis=1)
+        elif 'line' in df.columns:
+            # Handling jams structure
+            # Assuming 'line' is a list of coordinate objects
+            df['geometry'] = df['line'].apply(lambda coords: LineString([(coord['x'], coord['y']) for coord in coords]))
+        else:
+            print(f"Location data not found in the file: {file_name}")
+            return None
+        
+        # Drop any rows with missing critical values
+        critical_columns = ['uuid', 'type', 'pubMillis', 'geometry']
+        df.dropna(subset=critical_columns, inplace=True)
+        
+        # Drop duplicates based on uuid
+        df.drop_duplicates(subset=['uuid'], inplace=True)
+        
+        return df
+    except json.JSONDecodeError as e:
+        print(f"Error reading {file_name}: {e}")
+        return None
 
-project_root_dir = os.path.dirname(os.path.abspath(__file__))
-filepath_alerts = os.path.join(project_root_dir , 'alerts-processed.json')
-filepath_jams = os.path.join(project_root_dir , 'jams-processed.json')
-alerts_df = pd.read_json(filepath_alerts)
-jams_df = pd.read_json(filepath_jams)
+def create_geodataframe(df):
+    if df is not None:
+        return gpd.GeoDataFrame(df, geometry='geometry')
+    else:
+        print("Unable to create GeoDataFrame, input DataFrame is None.")
+        return NoneS
+
+# Use the relative path from the script to the json files
+alerts_df = load_and_preprocess('TM_Exam/alerts-processed.json')
+jams_df = load_and_preprocess('TM_Exam/jams-processed.json')
+
+# Create GeoDataFrames if the data was loaded successfully
+alerts_gdf = create_geodataframe(alerts_df)
+jams_gdf = create_geodataframe(jams_df)
+
+# Check if the DataFrames were created successfully before attempting to print or use them
+if alerts_gdf is not None:
+    print("Alerts Data:")
+    print(alerts_gdf.head())
+
+if jams_gdf is not None:
+    print("Jams Data:")
+    print(jams_gdf.head())
 
 # Display the first few rows
 print("Alerts Data:")
@@ -17,11 +71,11 @@ print(alerts_df.head())
 print("\nJams Data:")
 print(jams_df.head())
 
-# Basic statistics and data types
-print("\nAlerts Data Info:")
-print(alerts_df.info())
-print("\nJams Data Info:")
-print(jams_df.info())
+# Basic Statistical AnalysisS
+print("Basic Statistics for Alerts:")
+print(alerts_df.describe())
+print("\nBasic Statistics for Jams:")
+print(jams_df.describe())
 
 # Step 2: Check for Missing Values
 print("\nMissing Values in Alerts Data:")
@@ -44,36 +98,29 @@ plt.legend()
 plt.show()
 
 
-# Step 5: Waze Alerts Analysis
+# EDA - Basic Descriptive Statistics
+print(alerts_df.describe())
+
+# EDA - Temporal Analysis
+alerts_df['hour'] = alerts_df['pubMillis'].dt.hour
 plt.figure(figsize=(12, 6))
-sns.countplot(data=alerts_df, x='type')
-plt.title('Distribution of Alert Types')
-plt.xlabel('Alert Type')
-plt.ylabel('Count')
+sns.countplot(x='hour', data=alerts_df)
+plt.title('Alerts by Hour')
+plt.xlabel('Hour of Day')
+plt.ylabel('Number of Alerts')
 plt.show()
 
-plt.figure(figsize=(12, 6))
-sns.scatterplot(data=alerts_df, x='reportRating', y='reliability')
-plt.title('Relationship between Report Rating and Reliability in Alerts')
-plt.xlabel('Report Rating')
-plt.ylabel('Reliability')
+# EDA - Correlation Analysis
+correlation_features = ['reliability', 'reportRating', 'nThumbsUp']
+correlation_matrix = alerts_df[correlation_features].corr()
+sns.heatmap(correlation_matrix, annot=True)
+plt.title('Correlation Matrix of Alerts')
 plt.show()
 
-# Step 6: Waze Jams Analysis
-plt.figure(figsize=(12, 6))
-sns.countplot(data=jams_df, x='type')
-plt.title('Distribution of Jam Types')
-plt.xlabel('Jam Type')
-plt.ylabel('Count')
+# EDA - Spatial Analysis
+fig, ax = plt.subplots(figsize=(10, 10))
+alerts_gdf.plot(ax=ax, color='blue', markersize=5)
+plt.title('Spatial Distribution of Alerts')
+plt.xlabel('Longitude')
+plt.ylabel('Latitude')
 plt.show()
-
-plt.figure(figsize=(12, 6))
-sns.scatterplot(data=jams_df, x='level', y='length')
-plt.title('Relationship between Traffic Congestion Level and Jam Length')
-plt.xlabel('Traffic Congestion Level')
-plt.ylabel('Jam Length')
-plt.show()
-
-# Step 7: Correlation Analysis
-corr_alerts = alerts_df.corr()
-corr_jams = jams_df.corr()
